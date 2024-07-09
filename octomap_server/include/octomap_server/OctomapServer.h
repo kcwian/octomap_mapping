@@ -70,6 +70,7 @@
 #include <octomap_ros/conversions.h>
 #include <octomap/octomap.h>
 #include <octomap/OcTreeKey.h>
+#include <custom_msgs/ScansAndPoses.h>
 
 //#define COLOR_OCTOMAP_SERVER // switch color here - easier maintenance, only maintain OctomapServer. Two targets are defined in the cmake, octomap_server_color and octomap_server. One has this defined, and the other doesn't
 
@@ -101,6 +102,10 @@ public:
   bool resetSrv(std_srvs::Empty::Request& req, std_srvs::Empty::Response& resp);
 
   virtual void insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud);
+  void scansAndPosesCallback(const custom_msgs::ScansAndPoses::ConstPtr& cloud);
+  Eigen::Isometry3f poseMsgToIsometry(const geometry_msgs::Pose & poseIn);
+  Eigen::Matrix4f estimateCameraTilt(const Eigen::Isometry3f& prevPose, const Eigen::Isometry3f& actPose);
+
   virtual bool openFile(const std::string& filename);
 
 protected:
@@ -207,6 +212,7 @@ protected:
   ros::NodeHandle m_nh;
   ros::NodeHandle m_nh_private;
   ros::Publisher  m_markerPub, m_binaryMapPub, m_fullMapPub, m_pointCloudPub, m_collisionObjectPub, m_mapPub, m_cmapPub, m_fmapPub, m_fmarkerPub;
+  ros::Subscriber scansAndPosesSub;
   message_filters::Subscriber<sensor_msgs::PointCloud2>* m_pointCloudSub;
   tf::MessageFilter<sensor_msgs::PointCloud2>* m_tfPointCloudSub;
   ros::ServiceServer m_octomapBinaryService, m_octomapFullService, m_clearBBXService, m_resetService;

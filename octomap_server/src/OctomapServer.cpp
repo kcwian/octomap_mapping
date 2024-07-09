@@ -28,6 +28,7 @@
  */
 
 #include <octomap_server/OctomapServer.h>
+#include <nav_msgs/Odometry.h>
 
 using namespace octomap;
 using octomap_msgs::Octomap;
@@ -173,6 +174,7 @@ OctomapServer::OctomapServer(const ros::NodeHandle private_nh_, const ros::NodeH
   m_pointCloudPub = m_nh.advertise<sensor_msgs::PointCloud2>("octomap_point_cloud_centers", 1, m_latchedTopics);
   m_mapPub = m_nh.advertise<nav_msgs::OccupancyGrid>("projected_map", 5, m_latchedTopics);
   m_fmarkerPub = m_nh.advertise<visualization_msgs::MarkerArray>("free_cells_vis_array", 1, m_latchedTopics);
+  scansAndPosesSub = m_nh.subscribe("all_scans_and_poses", 1, &OctomapServer::scansAndPosesCallback, this);
 
   m_pointCloudSub = new message_filters::Subscriber<sensor_msgs::PointCloud2> (m_nh, "cloud_in", 5);
   m_tfPointCloudSub = new tf::MessageFilter<sensor_msgs::PointCloud2> (*m_pointCloudSub, m_tfListener, m_worldFrameId, 5);
@@ -260,6 +262,96 @@ bool OctomapServer::openFile(const std::string& filename){
 
 }
 
+Eigen::Isometry3f OctomapServer::poseMsgToIsometry(const geometry_msgs::Pose & poseIn){
+
+    Eigen::Isometry3f poseOut = Eigen::Isometry3f::Identity();
+    poseOut.translation() = Eigen::Vector3f(poseIn.position.x, poseIn.position.y, poseIn.position.z);
+    poseOut.linear() = Eigen::Quaternionf(poseIn.orientation.w, poseIn.orientation.x, poseIn.orientation.y, poseIn.orientation.z).toRotationMatrix();
+    return poseOut;
+}
+
+Eigen::Matrix4f OctomapServer::estimateCameraTilt(const Eigen::Isometry3f & prevPose, const Eigen::Isometry3f & actPose){
+  Eigen::Vector3f poseIncTrans = (prevPose.inverse() * actPose).translation();
+  float distanceXZ = sqrt(poseIncTrans.x() * poseIncTrans.x() + poseIncTrans.z() * poseIncTrans.z());
+  float dir = poseIncTrans.z() >= 0 ? 1 : -1;
+  // Angle is negative when looking down
+  static float tiltAngle = 0;
+  tiltAngle = tiltAngle * 0.9 + dir * atan2(poseIncTrans.y(), distanceXZ) * 0.1;
+  Eigen::Matrix3f mat3f = Eigen::AngleAxisf(tiltAngle, Eigen::Vector3f::UnitX()).toRotationMatrix();
+  Eigen::Matrix4f mat4f = Eigen::Matrix4f::Identity();
+  mat4f.block<3, 3>(0, 0) = mat3f;
+  return mat4f;
+}
+
+void OctomapServer::scansAndPosesCallback(const custom_msgs::ScansAndPoses::ConstPtr& msg) {
+  ros::Time rostime = ros::Time::now();
+  m_octree->clear();
+  // clear 2D map:
+  m_gridmap.data.clear();
+  m_gridmap.info.height = 0.0;
+  m_gridmap.info.width = 0.0;
+  m_gridmap.info.resolution = 0.0;
+  m_gridmap.info.origin.position.x = 0.0;
+  m_gridmap.info.origin.position.y = 0.0;
+
+  ros::WallTime startTime = ros::WallTime::now();
+
+  // Odom - "orb_slam"
+  tf::StampedTransform mapToOdomTf;
+  try {
+    m_tfListener.lookupTransform(m_worldFrameId, msg->header.frame_id, msg->header.stamp, mapToOdomTf);
+  } catch(tf::TransformException& ex){
+    ROS_ERROR_STREAM( "Transform error of sensor data: " << ex.what() << ", quitting callback " << msg->header.frame_id <<  ", " << m_worldFrameId);
+    return;
+  }
+
+  Eigen::Matrix4f mapToOdom;
+  pcl_ros::transformAsMatrix(mapToOdomTf, mapToOdom);
+  
+  // Scans are in local frame (camera), and the poses of camera are in orb_slam frame
+  for (int i = 1; i < msg->poses.size(); i++) {
+    PCLPointCloud pc;
+    pcl::fromROSMsg(msg->scans[i], pc);
+
+    // Compensate camera angle based on translation between poses
+    Eigen::Isometry3f prevOdomToCamera = poseMsgToIsometry(msg->poses[i-1]);
+    Eigen::Isometry3f actualOdomToCamera = poseMsgToIsometry(msg->poses[i]);
+    Eigen::Matrix4f tiltCorrection = estimateCameraTilt(prevOdomToCamera, actualOdomToCamera);
+    // Transform local point cloud for correction
+    pcl::transformPointCloud(pc, pc, tiltCorrection);
+    
+    // set up filter for height range, also removes NANs:
+    pcl::PassThrough<PCLPoint> pass_x;
+    pass_x.setFilterFieldName("x");
+    pass_x.setFilterLimits(m_pointcloudMinX, m_pointcloudMaxX);
+    pcl::PassThrough<PCLPoint> pass_y;
+    pass_y.setFilterFieldName("y");
+    pass_y.setFilterLimits(m_pointcloudMinY, m_pointcloudMaxY);
+    pcl::PassThrough<PCLPoint> pass_z;
+    pass_z.setFilterFieldName("z");
+    pass_z.setFilterLimits(m_pointcloudMinZ, m_pointcloudMaxZ);
+    pass_x.setInputCloud(pc.makeShared());
+    pass_x.filter(pc);
+    pass_y.setInputCloud(pc.makeShared());
+    pass_y.filter(pc);
+    pass_z.setInputCloud(pc.makeShared());
+    pass_z.filter(pc);
+    // Transform local point cloud back to add it to a map
+    pcl::transformPointCloud(pc, pc, tiltCorrection.inverse());
+    Eigen::Matrix4f mapToCamera = mapToOdom * actualOdomToCamera.matrix();
+    pcl::transformPointCloud(pc, pc, mapToCamera);
+    
+    PCLPointCloud pc_ground;     // segmented ground plane
+    PCLPointCloud pc_nonground;  // everything else
+    pc_nonground = pc;
+    pc_ground.header = pc.header;
+    pc_nonground.header = pc.header;
+    tf::Point origin = tf::Point(mapToCamera(0, 3), mapToCamera(1, 3), mapToCamera(2, 3));
+    insertScan(origin, pc_ground, pc_nonground);
+  }
+  publishAll(msg->header.stamp);
+}
+
 void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud){
   ros::WallTime startTime = ros::WallTime::now();
 
@@ -328,9 +420,8 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
     pcl::transformPointCloud(pc_ground, pc_ground, baseToWorld);
     pcl::transformPointCloud(pc_nonground, pc_nonground, baseToWorld);
   } else {
-    // directly transform to map frame:
-    pcl::transformPointCloud(pc, pc, sensorToWorld);
 
+    // Filter local points, then transform
     // just filter height range:
     pass_x.setInputCloud(pc.makeShared());
     pass_x.filter(pc);
@@ -338,6 +429,9 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
     pass_y.filter(pc);
     pass_z.setInputCloud(pc.makeShared());
     pass_z.filter(pc);
+
+    // directly transform to map frame:
+    pcl::transformPointCloud(pc, pc, sensorToWorld);
 
     pc_nonground = pc;
     // pc_nonground is empty without ground segmentation

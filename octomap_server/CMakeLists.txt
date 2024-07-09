@@ -14,6 +14,8 @@ set(PACKAGE_DEPENDENCIES
   octomap_msgs
   dynamic_reconfigure
   nodelet
+  custom_msgs
+  nav_msgs
 )
 
 find_package(catkin REQUIRED COMPONENTS ${PACKAGE_DEPENDENCIES})

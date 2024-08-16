@@ -1182,7 +1182,7 @@ void OctomapServer::update2DMap(const OcTreeT::iterator& it, bool occupied){
   if (it.getDepth() == m_maxTreeDepth){
     unsigned idx = mapIdx(it.getKey());
     if (occupied)
-      m_gridmap.data[mapIdx(it.getKey())] = 100;
+      m_gridmap.data[mapIdx(it.getKey())] = 0;
     else if (m_gridmap.data[idx] == -1){
       m_gridmap.data[idx] = 0;
     }

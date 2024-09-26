@@ -415,9 +415,6 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
   //
   // ground filtering in base frame
   //
-  PCLPointCloud pc; // input cloud for filtering and ground-detection
-  pcl::fromROSMsg(*cloud, pc);
-
   tf::StampedTransform sensorToWorldTf;
   try {
     m_tfListener.lookupTransform(m_worldFrameId, cloud->header.frame_id, cloud->header.stamp, sensorToWorldTf);
@@ -425,9 +422,17 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
     ROS_ERROR_STREAM( "Transform error of sensor data: " << ex.what() << ", quitting callback");
     return;
   }
+  
+  if (sensorToWorldTf.getOrigin()[0] == 0 && sensorToWorldTf.getOrigin()[1] == 0)
+      return;
+
+  PCLPointCloud pc;  // input cloud for filtering and ground-detection
+  pcl::fromROSMsg(*cloud, pc);
 
   Eigen::Matrix4f sensorToWorld;
   pcl_ros::transformAsMatrix(sensorToWorldTf, sensorToWorld);
+
+  // Save scan
   m_scans.push_back(cloud);
 
   // set up filter for height range, also removes NANs:
@@ -1238,7 +1243,7 @@ void OctomapServer::update2DMap(const OcTreeT::iterator& it, bool occupied){
   if (it.getDepth() == m_maxTreeDepth){
     unsigned idx = mapIdx(it.getKey());
     if (occupied)
-      m_gridmap.data[mapIdx(it.getKey())] = 0;
+      m_gridmap.data[mapIdx(it.getKey())] = 100;
     else if (m_gridmap.data[idx] == -1){
       m_gridmap.data[idx] = 0;
     }

@@ -71,6 +71,7 @@
 #include <octomap/octomap.h>
 #include <octomap/OcTreeKey.h>
 #include <custom_msgs/ScansAndPoses.h>
+#include <custom_msgs/PoseStampedArray.h>
 
 //#define COLOR_OCTOMAP_SERVER // switch color here - easier maintenance, only maintain OctomapServer. Two targets are defined in the cmake, octomap_server_color and octomap_server. One has this defined, and the other doesn't
 
@@ -105,6 +106,7 @@ public:
   void scansAndPosesCallback(const custom_msgs::ScansAndPoses::ConstPtr& cloud);
   Eigen::Isometry3f poseMsgToIsometry(const geometry_msgs::Pose & poseIn);
   Eigen::Matrix4f estimateCameraTilt(const Eigen::Isometry3f& prevPose, const Eigen::Isometry3f& actPose);
+  void allKeyFramesCallback(const custom_msgs::PoseStampedArray::ConstPtr& msg);
 
   virtual bool openFile(const std::string& filename);
 
@@ -213,6 +215,7 @@ protected:
   ros::NodeHandle m_nh_private;
   ros::Publisher  m_markerPub, m_binaryMapPub, m_fullMapPub, m_pointCloudPub, m_collisionObjectPub, m_mapPub, m_cmapPub, m_fmapPub, m_fmarkerPub;
   ros::Subscriber scansAndPosesSub;
+  ros::Subscriber allKeyFramesSub;
   message_filters::Subscriber<sensor_msgs::PointCloud2>* m_pointCloudSub;
   tf::MessageFilter<sensor_msgs::PointCloud2>* m_tfPointCloudSub;
   ros::ServiceServer m_octomapBinaryService, m_octomapFullService, m_clearBBXService, m_resetService;
@@ -271,6 +274,9 @@ protected:
   unsigned m_multires2DScale;
   bool m_projectCompleteMap;
   bool m_useColoredMap;
+
+  // To store the scans
+  std::vector<sensor_msgs::PointCloud2::ConstPtr> m_scans;
 };
 }
 

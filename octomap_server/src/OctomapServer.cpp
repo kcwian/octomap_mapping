@@ -175,6 +175,7 @@ OctomapServer::OctomapServer(const ros::NodeHandle private_nh_, const ros::NodeH
   m_mapPub = m_nh.advertise<nav_msgs::OccupancyGrid>("projected_map", 5, m_latchedTopics);
   m_fmarkerPub = m_nh.advertise<visualization_msgs::MarkerArray>("free_cells_vis_array", 1, m_latchedTopics);
   scansAndPosesSub = m_nh.subscribe("all_scans_and_poses", 1, &OctomapServer::scansAndPosesCallback, this);
+  allKeyFramesSub = m_nh.subscribe("orbslam_all_keyframes", 1, &OctomapServer::allKeyFramesCallback, this);
 
   m_pointCloudSub = new message_filters::Subscriber<sensor_msgs::PointCloud2> (m_nh, "cloud_in", 5);
   m_tfPointCloudSub = new tf::MessageFilter<sensor_msgs::PointCloud2> (*m_pointCloudSub, m_tfListener, m_worldFrameId, 5);
@@ -283,6 +284,61 @@ Eigen::Matrix4f OctomapServer::estimateCameraTilt(const Eigen::Isometry3f & prev
   return mat4f;
 }
 
+void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::ConstPtr& msg) {
+  ros::Time rostime = ros::Time::now();
+  m_octree->clear();
+  // clear 2D map:
+  m_gridmap.data.clear();
+  m_gridmap.info.height = 0.0;
+  m_gridmap.info.width = 0.0;
+  m_gridmap.info.resolution = 0.0;
+  m_gridmap.info.origin.position.x = 0.0;
+  m_gridmap.info.origin.position.y = 0.0;
+
+  ros::WallTime startTime = ros::WallTime::now();
+
+  // Odom - "orb_slam"
+  tf::StampedTransform mapToOdomTf;
+  try {
+    m_tfListener.lookupTransform(m_worldFrameId, msg->header.frame_id, msg->header.stamp, mapToOdomTf);
+  } catch(tf::TransformException& ex){
+    ROS_ERROR_STREAM( "Transform error of sensor data: " << ex.what() << ", quitting callback " << msg->header.frame_id <<  ", " << m_worldFrameId);
+    return;
+  }
+
+  Eigen::Matrix4f mapToOdom;
+  pcl_ros::transformAsMatrix(mapToOdomTf, mapToOdom);
+  
+  // Scans are in local frame (camera), and the poses of camera are in orb_slam frame
+  for (int i = 1, j = 0; i < msg->poses.size(); i++) {
+    // Find the point cloud
+    PCLPointCloud pc;
+    for (; j < m_scans.size(); j++) {
+      if (m_scans.at(j)->header.stamp == msg->poses[i].header.stamp) {
+        pcl::fromROSMsg(*m_scans.at(j), pc);
+        break;
+      }
+    }
+    // Check if the point cloud was found
+    if (pc.size() == 0)
+        continue;
+
+    Eigen::Isometry3f actualOdomToCamera = poseMsgToIsometry(msg->poses[i].pose);
+    // Transform local point cloud back to add it to a map
+    Eigen::Matrix4f mapToCamera = mapToOdom * actualOdomToCamera.matrix();
+    pcl::transformPointCloud(pc, pc, mapToCamera);
+    
+    PCLPointCloud pc_ground;     // segmented ground plane
+    PCLPointCloud pc_nonground;  // everything else
+    pc_nonground = pc;
+    pc_ground.header = pc.header;
+    pc_nonground.header = pc.header;
+    tf::Point origin = tf::Point(mapToCamera(0, 3), mapToCamera(1, 3), mapToCamera(2, 3));
+    insertScan(origin, pc_ground, pc_nonground);
+  }
+  publishAll(msg->header.stamp);
+}
+
 void OctomapServer::scansAndPosesCallback(const custom_msgs::ScansAndPoses::ConstPtr& msg) {
   ros::Time rostime = ros::Time::now();
   m_octree->clear();
@@ -372,7 +428,7 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
 
   Eigen::Matrix4f sensorToWorld;
   pcl_ros::transformAsMatrix(sensorToWorldTf, sensorToWorld);
-
+  m_scans.push_back(cloud);
 
   // set up filter for height range, also removes NANs:
   pcl::PassThrough<PCLPoint> pass_x;

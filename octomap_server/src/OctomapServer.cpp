@@ -332,6 +332,24 @@ void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::Co
 	//std::cout << "Did not find any cloud for pose " << msg->poses[i].header.stamp << " J val: " << j <<  std::endl;
         continue;
     }
+
+    // Filter invalid points
+    pcl::PassThrough<PCLPoint> pass_x;
+    pass_x.setFilterFieldName("x");
+    pass_x.setFilterLimits(m_pointcloudMinX, m_pointcloudMaxX);
+    pcl::PassThrough<PCLPoint> pass_y;
+    pass_y.setFilterFieldName("y");
+    pass_y.setFilterLimits(m_pointcloudMinY, m_pointcloudMaxY);
+    pcl::PassThrough<PCLPoint> pass_z;
+    pass_z.setFilterFieldName("z");
+    pass_z.setFilterLimits(m_pointcloudMinZ, m_pointcloudMaxZ);
+    pass_x.setInputCloud(pc.makeShared());
+    pass_x.filter(pc);
+    pass_y.setInputCloud(pc.makeShared());
+    pass_y.filter(pc);
+    pass_z.setInputCloud(pc.makeShared());
+    pass_z.filter(pc);
+
     Eigen::Isometry3f actualOdomToCamera = poseMsgToIsometry(msg->poses[i].pose);
     // Transform local point cloud back to add it to a map
     Eigen::Matrix4f mapToCamera = mapToOdom * actualOdomToCamera.matrix();

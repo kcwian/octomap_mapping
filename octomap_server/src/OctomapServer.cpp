@@ -285,6 +285,7 @@ Eigen::Matrix4f OctomapServer::estimateCameraTilt(const Eigen::Isometry3f & prev
 }
 
 void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::ConstPtr& msg) {
+  //std::cout << "allKeyFramesCallback" << std::endl;
   ros::Time rostime = ros::Time::now();
   m_octree->clear();
   // clear 2D map:
@@ -313,16 +314,24 @@ void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::Co
   for (int i = 1, j = 0; i < msg->poses.size(); i++) {
     // Find the point cloud
     PCLPointCloud pc;
+    //std::cout << "Timestamp to find: " << msg->poses[i].header.stamp << std::endl;
     for (; j < m_scans.size(); j++) {
-      if (m_scans.at(j)->header.stamp == msg->poses[i].header.stamp) {
+    //  std::cout << "Timestamp considered: " << m_scans.at(j)->header.stamp << std::endl;
+      double timeDiff = (m_scans.at(j)->header.stamp - msg->poses[i].header.stamp).toSec();
+      if (abs(timeDiff) < 0.01) {
         pcl::fromROSMsg(*m_scans.at(j), pc);
         break;
       }
+      else if(timeDiff > 1.1){
+        j = 0;
+	break;
+      }
     }
     // Check if the point cloud was found
-    if (pc.size() == 0)
+    if (pc.size() == 0){
+	//std::cout << "Did not find any cloud for pose " << msg->poses[i].header.stamp << " J val: " << j <<  std::endl;
         continue;
-
+    }
     Eigen::Isometry3f actualOdomToCamera = poseMsgToIsometry(msg->poses[i].pose);
     // Transform local point cloud back to add it to a map
     Eigen::Matrix4f mapToCamera = mapToOdom * actualOdomToCamera.matrix();
@@ -434,7 +443,6 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
 
   // Save scan
   m_scans.push_back(cloud);
-
   // set up filter for height range, also removes NANs:
   pcl::PassThrough<PCLPoint> pass_x;
   pass_x.setFilterFieldName("x");

@@ -174,8 +174,8 @@ OctomapServer::OctomapServer(const ros::NodeHandle private_nh_, const ros::NodeH
   m_pointCloudPub = m_nh.advertise<sensor_msgs::PointCloud2>("octomap_point_cloud_centers", 1, m_latchedTopics);
   m_mapPub = m_nh.advertise<nav_msgs::OccupancyGrid>("projected_map", 5, m_latchedTopics);
   m_fmarkerPub = m_nh.advertise<visualization_msgs::MarkerArray>("free_cells_vis_array", 1, m_latchedTopics);
-  scansAndPosesSub = m_nh.subscribe("all_scans_and_poses", 1, &OctomapServer::scansAndPosesCallback, this);
-  allKeyFramesSub = m_nh.subscribe("orbslam_all_keyframes", 1, &OctomapServer::allKeyFramesCallback, this);
+  // scansAndPosesSub = m_nh.subscribe("all_scans_and_poses", 1, &OctomapServer::scansAndPosesCallback, this);
+  allKeyFramesSub = m_nh.subscribe("all_keyframes", 1, &OctomapServer::allKeyFramesCallback, this);
 
   m_pointCloudSub = new message_filters::Subscriber<sensor_msgs::PointCloud2> (m_nh, "cloud_in", 5);
   m_tfPointCloudSub = new tf::MessageFilter<sensor_msgs::PointCloud2> (*m_pointCloudSub, m_tfListener, m_worldFrameId, 5);

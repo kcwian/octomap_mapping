@@ -285,8 +285,13 @@ Eigen::Matrix4f OctomapServer::estimateCameraTilt(const Eigen::Isometry3f & prev
 }
 
 void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::ConstPtr& msg) {
+  m_lastkeyFramesMsg = msg;
+}
+
+void OctomapServer::processAllKeyFrames() {
   //std::cout << "allKeyFramesCallback" << std::endl;
-  ros::Time rostime = ros::Time::now();
+  custom_msgs::PoseStampedArray::ConstPtr& msg = m_lastkeyFramesMsg;
+
   m_octree->clear();
   // clear 2D map:
   m_gridmap.data.clear();
@@ -309,8 +314,9 @@ void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::Co
 
   Eigen::Matrix4f mapToOdom;
   pcl_ros::transformAsMatrix(mapToOdomTf, mapToOdom);
-  
+
   // Scans are in local frame (camera), and the poses of camera are in orb_slam frame
+  std::vector<bool> scan_used(m_scans.size(),false);
   for (int i = 1, j = 0; i < msg->poses.size(); i++) {
     // Find the point cloud
     PCLPointCloud pc;
@@ -320,9 +326,10 @@ void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::Co
       double timeDiff = (m_scans.at(j)->header.stamp - msg->poses[i].header.stamp).toSec();
       if (abs(timeDiff) < 0.01) {
         pcl::fromROSMsg(*m_scans.at(j), pc);
+        scan_used[j] = true;
         break;
       }
-      else if(timeDiff > 1.1){
+      else if(timeDiff > 0.1){
         j = 0;
 	break;
       }
@@ -330,6 +337,7 @@ void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::Co
     // Check if the point cloud was found
     if (pc.size() == 0){
 	//std::cout << "Did not find any cloud for pose " << msg->poses[i].header.stamp << " J val: " << j <<  std::endl;
+        j = 0;
         continue;
     }
 
@@ -363,11 +371,26 @@ void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::Co
     tf::Point origin = tf::Point(mapToCamera(0, 3), mapToCamera(1, 3), mapToCamera(2, 3));
     insertScan(origin, pc_ground, pc_nonground);
   }
+
+  // Do not remove last scans as the poses might be missing
+  double lastPoseTimestamp = (msg->poses[msg->poses.size() - 1].header.stamp).toSec();
+  for (int i = 0; i < m_scans.size(); i++) {
+    if (scan_used[i] == false && m_scans.at(i)->header.stamp.toSec() - lastPoseTimestamp > -30.0)
+      scan_used[i] = true;
+
+    m_scans.erase(std::remove_if(m_scans.begin(),
+                                 m_scans.end(),
+                                 [&scan_used, index = 0](const auto&) mutable { 
+                                  bool should_remove = !scan_used[index];
+                                  index++;
+                                  return should_remove; }),
+                  m_scans.end());
+  }
+
   publishAll(msg->header.stamp);
 }
 
 void OctomapServer::scansAndPosesCallback(const custom_msgs::ScansAndPoses::ConstPtr& msg) {
-  ros::Time rostime = ros::Time::now();
   m_octree->clear();
   // clear 2D map:
   m_gridmap.data.clear();
@@ -436,12 +459,12 @@ void OctomapServer::scansAndPosesCallback(const custom_msgs::ScansAndPoses::Cons
 }
 
 void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud){
+
+  static double lastMsgTime = cloud->header.stamp.toSec();
+  if (cloud->header.stamp.toSec() - lastMsgTime < 1.0)
+    return;
+  
   ros::WallTime startTime = ros::WallTime::now();
-
-
-  //
-  // ground filtering in base frame
-  //
   tf::StampedTransform sensorToWorldTf;
   try {
     m_tfListener.lookupTransform(m_worldFrameId, cloud->header.frame_id, cloud->header.stamp, sensorToWorldTf);
@@ -526,13 +549,13 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
     pc_nonground.header = pc.header;
   }
 
-
   insertScan(sensorToWorldTf.getOrigin(), pc_ground, pc_nonground);
 
   double total_elapsed = (ros::WallTime::now() - startTime).toSec();
   ROS_DEBUG("Pointcloud insertion in OctomapServer done (%zu+%zu pts (ground/nonground), %f sec)", pc_ground.size(), pc_nonground.size(), total_elapsed);
 
   publishAll(cloud->header.stamp);
+  lastMsgTime = cloud->header.stamp.toSec();
 }
 
 void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCloud& ground, const PCLPointCloud& nonground){

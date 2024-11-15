@@ -76,10 +76,18 @@ int main(int argc, char** argv){
       exit(1);
     }
   }
-
-  try{
-    ros::spin();
-  }catch(std::runtime_error& e){
+  ros::Rate rate(1);
+  try {
+    ros::WallTime startTime = ros::WallTime::now();
+    while (ros::ok()) {
+      if ((ros::WallTime::now() - startTime).toSec() > 10.0) {
+        server.processAllKeyFrames();
+        startTime = ros::WallTime::now();
+      }
+      ros::spinOnce();
+      rate.sleep();
+    }
+  } catch (std::runtime_error& e) {
     ROS_ERROR("octomap_server exception: %s", e.what());
     return -1;
   }

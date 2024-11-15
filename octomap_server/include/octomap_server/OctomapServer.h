@@ -107,6 +107,7 @@ public:
   Eigen::Isometry3f poseMsgToIsometry(const geometry_msgs::Pose & poseIn);
   Eigen::Matrix4f estimateCameraTilt(const Eigen::Isometry3f& prevPose, const Eigen::Isometry3f& actPose);
   void allKeyFramesCallback(const custom_msgs::PoseStampedArray::ConstPtr& msg);
+  void processAllKeyFrames();
 
   virtual bool openFile(const std::string& filename);
 
@@ -277,6 +278,7 @@ protected:
 
   // To store the scans
   std::vector<sensor_msgs::PointCloud2::ConstPtr> m_scans;
+  custom_msgs::PoseStampedArray::ConstPtr m_lastkeyFramesMsg;
 };
 }
 

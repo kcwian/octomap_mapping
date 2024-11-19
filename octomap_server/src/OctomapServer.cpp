@@ -290,7 +290,20 @@ void OctomapServer::allKeyFramesCallback(const custom_msgs::PoseStampedArray::Co
 
 void OctomapServer::processAllKeyFrames() {
   //std::cout << "allKeyFramesCallback" << std::endl;
+  if (!m_lastkeyFramesMsg)
+     return;
+  
   custom_msgs::PoseStampedArray::ConstPtr& msg = m_lastkeyFramesMsg;
+  std::cout << "Poses: " << msg->poses.size() << std::endl;
+
+  tf::StampedTransform mapToOdomTf;
+  try {
+    //_tfListener.waitForTransform(m_worldFrameId, msg->header.frame_id, msg->header.stamp, ros::Duration(3.0));
+    m_tfListener.lookupTransform(m_worldFrameId, msg->header.frame_id, ros::Time(0), mapToOdomTf);
+  } catch(tf::TransformException& ex){
+    ROS_ERROR_STREAM( "Transform error of here is the error ?sensor data: " << ex.what() << ", quitting callback " << msg->header.frame_id <<  ", " << m_worldFrameId);
+    return;
+  }
 
   m_octree->clear();
   // clear 2D map:
@@ -301,16 +314,7 @@ void OctomapServer::processAllKeyFrames() {
   m_gridmap.info.origin.position.x = 0.0;
   m_gridmap.info.origin.position.y = 0.0;
 
-  ros::WallTime startTime = ros::WallTime::now();
-
   // Odom - "orb_slam"
-  tf::StampedTransform mapToOdomTf;
-  try {
-    m_tfListener.lookupTransform(m_worldFrameId, msg->header.frame_id, msg->header.stamp, mapToOdomTf);
-  } catch(tf::TransformException& ex){
-    ROS_ERROR_STREAM( "Transform error of sensor data: " << ex.what() << ", quitting callback " << msg->header.frame_id <<  ", " << m_worldFrameId);
-    return;
-  }
 
   Eigen::Matrix4f mapToOdom;
   pcl_ros::transformAsMatrix(mapToOdomTf, mapToOdom);
@@ -374,19 +378,32 @@ void OctomapServer::processAllKeyFrames() {
 
   // Do not remove last scans as the poses might be missing
   double lastPoseTimestamp = (msg->poses[msg->poses.size() - 1].header.stamp).toSec();
-  for (int i = 0; i < m_scans.size(); i++) {
-    if (scan_used[i] == false && m_scans.at(i)->header.stamp.toSec() - lastPoseTimestamp > -30.0)
-      scan_used[i] = true;
+  int removedCnt = 0;
+  for (int i = 0, j=0; j < scan_used.size(); i++, j++) {
+     //if (m_scans.at(i)->header.stamp.toSec() - lastPoseTimestamp > -10.0)
+      //scan_used[j] = true;
+    if (scan_used[j] == false && m_scans.at(i)->header.stamp.toSec() - lastPoseTimestamp < 1.0)
+    {
+//       m_scans.erase(m_scans.begin() + i);
+  //     i--;
+       removedCnt++;
+     }else
+     {
+        scan_used[j] = true;
+      }
+  }
+    int sizeBefore = m_scans.size();
 
-    m_scans.erase(std::remove_if(m_scans.begin(),
-                                 m_scans.end(),
-                                 [&scan_used, index = 0](const auto&) mutable { 
-                                  bool should_remove = !scan_used[index];
-                                  index++;
+    m_scans.erase(std::remove_if(begin(m_scans),
+                                end(m_scans),
+                                 [&](const auto& item) mutable { 
+                                 bool should_remove = !scan_used[&item - &*begin(m_scans)];
                                   return should_remove; }),
                   m_scans.end());
-  }
-
+  
+  int sizeAfter = m_scans.size();
+  std::cout << "Scans: " << m_scans.size()  << "Should be removed: " << removedCnt << " Actually removed : " << sizeBefore - sizeAfter << std::endl;
+  std::cout << std::setprecision(15) <<"lastPoseTimestamp: " << lastPoseTimestamp << std::endl;
   publishAll(msg->header.stamp);
 }
 
@@ -461,8 +478,11 @@ void OctomapServer::scansAndPosesCallback(const custom_msgs::ScansAndPoses::Cons
 void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud){
 
   static double lastMsgTime = cloud->header.stamp.toSec();
-  if (cloud->header.stamp.toSec() - lastMsgTime < 1.0)
+  if (cloud->header.stamp.toSec() - lastMsgTime < 0.5){  
+    m_scans.push_back(cloud);
     return;
+   }
+  lastMsgTime = cloud->header.stamp.toSec();
   
   ros::WallTime startTime = ros::WallTime::now();
   tf::StampedTransform sensorToWorldTf;
@@ -555,7 +575,6 @@ void OctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr
   ROS_DEBUG("Pointcloud insertion in OctomapServer done (%zu+%zu pts (ground/nonground), %f sec)", pc_ground.size(), pc_nonground.size(), total_elapsed);
 
   publishAll(cloud->header.stamp);
-  lastMsgTime = cloud->header.stamp.toSec();
 }
 
 void OctomapServer::insertScan(const tf::Point& sensorOriginTf, const PCLPointCloud& ground, const PCLPointCloud& nonground){

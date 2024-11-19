@@ -76,11 +76,11 @@ int main(int argc, char** argv){
       exit(1);
     }
   }
-  ros::Rate rate(1);
+  ros::Rate rate(10);
   try {
     ros::WallTime startTime = ros::WallTime::now();
     while (ros::ok()) {
-      if ((ros::WallTime::now() - startTime).toSec() > 10.0) {
+      if ((ros::WallTime::now() - startTime).toSec() > 30.0) {
         server.processAllKeyFrames();
         startTime = ros::WallTime::now();
       }
